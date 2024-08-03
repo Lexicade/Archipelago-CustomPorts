@@ -92,13 +92,13 @@ class WebHostContext(Context):
             time.sleep(5)
 
     @db_session
-    def load(self, room_id: int):
+    def load(self, room_id: int, game_ports: str):
         self.room_id = room_id
         room = Room.get(id=room_id)
         if room.last_port:
             self.port = room.last_port
         else:
-            self.port = get_random_port()
+            self.port = get_random_port(game_ports)
 
         multidata = self.decompress(room.seed.multidata)
         game_data_packages = {}
@@ -160,8 +160,45 @@ class WebHostContext(Context):
         return d
 
 
-def get_random_port():
-    return random.randint(49152, 65535)
+def get_random_port(game_ports):
+    config_range_list = game_ports.split(",")
+    available_ports = []
+    for item in config_range_list:
+        if '-' in item:
+            start, end = map(int, item.split('-'))
+            available_ports.extend(range(start, end+1))
+        else:
+            available_ports.append(int(item))
+
+    port = get_port_from_list(available_ports)
+    if port == 0:
+        logging.info("Unable to find port. Expanding search to the default ports. (49152-65535)")
+        checked_ports = []
+        while len(set(checked_ports)) < (65535-49152)+1:
+            port = random.randint(49152, 65535)
+            if not is_port_in_use(port):
+                break
+            else:
+                checked_ports.append(port)
+
+    return port
+
+
+def get_port_from_list(available_ports: list) -> int:
+    while available_ports:
+        port = random.choice(available_ports)
+        available_ports.remove(port)
+
+        if not is_port_in_use(port):
+            break
+    else:
+        port = 0
+    return port
+
+
+def is_port_in_use(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('localhost', port)) == 0
 
 
 @cache_argsless
@@ -215,7 +252,7 @@ def set_up_logging(room_id) -> logging.Logger:
 
 def run_server_process(name: str, ponyconfig: dict, static_server_data: dict,
                        cert_file: typing.Optional[str], cert_key_file: typing.Optional[str],
-                       host: str, rooms_to_run: multiprocessing.Queue, rooms_shutting_down: multiprocessing.Queue):
+                       host: str, game_ports: str, rooms_to_run: multiprocessing.Queue, rooms_shutting_down: multiprocessing.Queue):
     Utils.init_logging(name)
     try:
         import resource
@@ -247,7 +284,7 @@ def run_server_process(name: str, ponyconfig: dict, static_server_data: dict,
             try:
                 logger = set_up_logging(room_id)
                 ctx = WebHostContext(static_server_data, logger)
-                ctx.load(room_id)
+                ctx.load(room_id, game_ports)
                 ctx.init_save()
                 try:
                     ctx.server = websockets.serve(
@@ -325,10 +362,12 @@ def run_server_process(name: str, ponyconfig: dict, static_server_data: dict,
         def run(self):
             while 1:
                 next_room = rooms_to_run.get(block=True,  timeout=None)
+                gc.collect(0)
                 task = asyncio.run_coroutine_threadsafe(start_room(next_room), loop)
                 self._tasks.append(task)
                 task.add_done_callback(self._done)
                 logging.info(f"Starting room {next_room} on {name}.")
+                del task  # delete reference to task object
 
     starter = Starter()
     starter.daemon = True

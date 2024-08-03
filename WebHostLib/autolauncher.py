@@ -150,6 +150,7 @@ class MultiworldInstance():
         self.rooms_to_start = multiprocessing.Queue()
         self.rooms_shutting_down = multiprocessing.Queue()
         self.name = f"MultiHoster{id}"
+        self.game_ports = config["GAME_PORTS"]
 
     def start(self):
         if self.process and self.process.is_alive():
@@ -158,7 +159,7 @@ class MultiworldInstance():
         process = multiprocessing.Process(group=None, target=run_server_process,
                                           args=(self.name, self.ponyconfig, get_static_server_data(),
                                                 self.cert, self.key, self.host,
-                                                self.rooms_to_start, self.rooms_shutting_down),
+                                                self.rooms_to_start, self.rooms_shutting_down, self.game_ports),
                                           name=self.name)
         process.start()
         self.process = process
